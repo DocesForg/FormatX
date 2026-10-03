@@ -64,11 +64,14 @@ function setRunFormatting(run) {
   let properties = directWordChild(run, 'rPr');
   if (!properties) { properties = createWordElement(document, 'rPr'); run.insertBefore(properties, run.firstChild); }
   directWordChild(properties, 'rFonts')?.remove();
-  ['sz', 'szCs'].forEach(name => directWordChild(properties, name)?.remove());
+  ['sz', 'szCs', 'color'].forEach(name => directWordChild(properties, name)?.remove());
   const fonts = createWordElement(document, 'rFonts');
   ['ascii', 'hAnsi', 'cs', 'eastAsia'].forEach(name => setAttribute(fonts, name, 'Times New Roman'));
   properties.append(fonts);
   ['sz', 'szCs'].forEach(name => { const size = createWordElement(document, name); setAttribute(size, 'val', '28'); properties.append(size); });
+  const color = createWordElement(document, 'color');
+  setAttribute(color, 'val', '000000');
+  properties.append(color);
 }
 
 function normaliseContent(contentXml) {

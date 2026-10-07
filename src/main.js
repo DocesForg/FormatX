@@ -197,38 +197,128 @@ async function mergeImageRelationships(titleZip, contentZip, contentXml) {
   const sourceRelationshipsFile = contentZip.file('word/_rels/document.xml.rels');
   const titleRelationshipsFile = titleZip.file('word/_rels/document.xml.rels');
   if (!sourceRelationshipsFile || !titleRelationshipsFile) return contentXml;
-  const [sourceXml, titleXml] = await Promise.all([sourceRelationshipsFile.async('string'), titleRelationshipsFile.async('string')]);
+
+  const [sourceXml, titleXml] = await Promise.all([
+    sourceRelationshipsFile.async('string'),
+    titleRelationshipsFile.async('string')
+  ]);
+
   const parser = new DOMParser();
   const source = parser.parseFromString(sourceXml, 'application/xml');
   const title = parser.parseFromString(titleXml, 'application/xml');
+  const contentDocument = parser.parseFromString(contentXml, 'application/xml');
+  if (contentDocument.querySelector('parsererror')) throw new Error('В DOCX не удалось прочитать изображения.');
+
   const root = title.documentElement;
   const usedIds = new Set([...root.getElementsByTagName('Relationship')].map(node => node.getAttribute('Id')));
+  const sourceRelationships = new Map(
+    [...source.documentElement.getElementsByTagName('Relationship')]
+      .filter(node => /\/image$/.test(node.getAttribute('Type') || ''))
+      .map(node => [node.getAttribute('Id'), node])
+  );
+
+  // Read image relationships in the exact order in which image elements occur
+  // in document.xml. Relationship order inside document.xml.rels is unrelated
+  // to visual order in the document.
+  const imageRelIds = [];
+  const seen = new Set();
+  const addImageRelId = id => {
+    if (id && !seen.has(id) && sourceRelationships.has(id)) {
+      seen.add(id);
+      imageRelIds.push(id);
+    }
+  };
+
+  for (const element of [...contentDocument.getElementsByTagName('*')]) {
+    if (
+      element.namespaceURI === 'http://schemas.openxmlformats.org/drawingml/2006/main' &&
+      element.localName === 'blip'
+    ) {
+      addImageRelId(
+        element.getAttributeNS(R, 'embed') ||
+        element.getAttribute('r:embed') ||
+        element.getAttribute('embed')
+      );
+      addImageRelId(
+        element.getAttributeNS(R, 'link') ||
+        element.getAttribute('r:link') ||
+        element.getAttribute('link')
+      );
+    } else if (element.localName === 'imagedata') {
+      addImageRelId(
+        element.getAttributeNS(R, 'id') ||
+        element.getAttribute('r:id') ||
+        element.getAttribute('id')
+      );
+    }
+  }
+
+  const remap = new Map();
   let nextId = 1;
   let nextImage = 1;
-  const remap = new Map();
 
-  for (const relationship of [...source.documentElement.getElementsByTagName('Relationship')]) {
-    if (!/\/image$/.test(relationship.getAttribute('Type') || '')) continue;
+  for (const oldId of imageRelIds) {
+    const relationship = sourceRelationships.get(oldId);
     while (usedIds.has(`rId${nextId}`)) nextId += 1;
-    const id = `rId${nextId++}`;
-    const sourceTarget = relationship.getAttribute('Target');
-    const extension = (sourceTarget.match(/(\.[^./]+)$/)?.[1] || '.bin').replace(/[^.a-z0-9]/gi, '');
-    const target = `media/imported-image-${nextImage++}${extension}`;
-    const image = contentZip.file(`word/${sourceTarget.replace(/^\.\//, '')}`);
+
+    const newId = `rId${nextId++}`;
+    const sourceTarget = relationship.getAttribute('Target') || '';
+    const extension = (sourceTarget.match(/(\\.[^./]+)$/)?.[1] || '.bin')
+      .replace(/[^.a-z0-9]/gi, '');
+
+    // Resolve the relationship target relative to word/, including targets
+    // such as ../media/image1.png.
+    const targetParts = ['word', ...sourceTarget.split('/')];
+    const normalizedParts = [];
+    for (const part of targetParts) {
+      if (!part || part === '.') continue;
+      if (part === '..') normalizedParts.pop();
+      else normalizedParts.push(part);
+    }
+    const sourcePath = normalizedParts.join('/');
+    const image = contentZip.file(sourcePath);
     if (!image) continue;
+
+    const target = `media/imported-image-${nextImage++}${extension}`;
     titleZip.file(`word/${target}`, await image.async('uint8array'));
+
     const copied = title.createElement('Relationship');
-    copied.setAttribute('Id', id);
+    copied.setAttribute('Id', newId);
     copied.setAttribute('Type', relationship.getAttribute('Type'));
     copied.setAttribute('Target', target);
     root.append(copied);
-    usedIds.add(id);
-    remap.set(relationship.getAttribute('Id'), id);
+    usedIds.add(newId);
+    remap.set(oldId, newId);
   }
 
-  titleZip.file('word/_rels/document.xml.rels', new XMLSerializer().serializeToString(title));
-  for (const [oldId, newId] of remap) contentXml = contentXml.replace(new RegExp(`(r:(?:embed|link|id)=")${oldId}("|')`, 'g'), `$1${newId}$2`);
-  return contentXml;
+  // Apply all relationship changes to the original DOM in one pass.
+  // This prevents chained replacements such as rId1 -> rId2 -> rId3,
+  // which was the cause of images changing places.
+  for (const element of [...contentDocument.getElementsByTagName('*')]) {
+    if (
+      element.namespaceURI === 'http://schemas.openxmlformats.org/drawingml/2006/main' &&
+      element.localName === 'blip'
+    ) {
+      for (const attribute of ['embed', 'link']) {
+        const oldId = element.getAttributeNS(R, attribute);
+        const newId = remap.get(oldId);
+        if (newId) element.setAttributeNS(R, `r:${attribute}`, newId);
+      }
+    } else if (element.localName === 'imagedata') {
+      const oldId = element.getAttributeNS(R, 'id');
+      const newId = remap.get(oldId);
+      if (newId) element.setAttributeNS(R, 'r:id', newId);
+    }
+  }
+
+  titleZip.file(
+    'word/_rels/document.xml.rels',
+    new XMLSerializer().serializeToString(title)
+  );
+
+  // Do not touch wp:extent, a:ext, a:xfrm or any other drawing geometry.
+  // The original image display dimensions therefore remain unchanged.
+  return new XMLSerializer().serializeToString(contentDocument);
 }
 
 function titleBodyWithoutTrailingPageBreaks(titleXml) {

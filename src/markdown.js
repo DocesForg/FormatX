@@ -89,11 +89,11 @@ function markdownToWordXml(markdown) {
     }
     if (!line.trim()) { flushParagraph(); flushList(); continue; }
     if (/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)) continue;
-    if (/^\s*\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[i + 1])) {
+    if (line.includes('|') && i + 1 < lines.length && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[i + 1])) {
       flushParagraph(); flushList();
       const rows = [markdownTableRow(line)];
       i += 2;
-      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) { rows.push(markdownTableRow(lines[i])); i += 1; }
+      while (i < lines.length && lines[i].includes('|')) { rows.push(markdownTableRow(lines[i])); i += 1; }
       i -= 1;
       output.push(markdownTableXml(rows));
       continue;

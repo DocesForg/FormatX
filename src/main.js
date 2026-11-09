@@ -350,10 +350,17 @@ function titleBodyWithoutTrailingPageBreaks(titleXml) {
 
 async function makeDocument(titleFile, contentFile) {
   JSZip = JSZip || await loadZipLibrary();
-  const [titleZip, contentZip] = await Promise.all([JSZip.loadAsync(titleFile), JSZip.loadAsync(contentFile)]);
-  const [titleXml, rawContentXml] = await Promise.all([titleZip.file('word/document.xml').async('string'), contentZip.file('word/document.xml').async('string')]);
-  const numberedContentXml = await mergeNumbering(titleZip, contentZip, rawContentXml);
-  const contentXml = await mergeImageRelationships(titleZip, contentZip, numberedContentXml);
+  const titleZip = await JSZip.loadAsync(titleFile);
+  const titleXml = await titleZip.file('word/document.xml').async('string');
+  let contentXml;
+  if (/\\.md$/i.test(contentFile.name)) {
+    contentXml = markdownToWordXml(await contentFile.text());
+  } else {
+    const contentZip = await JSZip.loadAsync(contentFile);
+    const rawContentXml = await contentZip.file('word/document.xml').async('string');
+    const numberedContentXml = await mergeNumbering(titleZip, contentZip, rawContentXml);
+    contentXml = await mergeImageRelationships(titleZip, contentZip, numberedContentXml);
+  }
   const { titleSection, content: titleContent } = titleBodyWithoutTrailingPageBreaks(titleXml);
   const titleBody = titleXml.match(/<w:body[^>]*>([\s\S]*)<\/w:body>/)?.[1] || '';
   // A page-break-before paragraph avoids the additional empty page caused by a

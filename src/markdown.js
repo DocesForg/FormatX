@@ -127,7 +127,7 @@ function markdownToWordXml(markdown) {
     paragraph.push(line.trim());
   }
   flushParagraph();
-  return output.join('');
+  return '<w:document xmlns:w="' + WORD_NS + '"><w:body>' + output.join('') + '</w:body></w:document>';
 }
 
 window.markdownToWordXml = markdownToWordXml;

@@ -353,7 +353,7 @@ async function makeDocument(titleFile, contentFile) {
   const titleZip = await JSZip.loadAsync(titleFile);
   const titleXml = await titleZip.file('word/document.xml').async('string');
   let contentXml;
-  if (/\\.md$/i.test(contentFile.name)) {
+  if (/\.md$/i.test(contentFile.name)) {
     contentXml = markdownToWordXml(await contentFile.text());
   } else {
     const contentZip = await JSZip.loadAsync(contentFile);
